@@ -139,7 +139,7 @@ def _detail_table(rows: list[dict]) -> str:
     return _text_block(out)
 
 
-def _stats_table(guild: discord.Guild, s: dict) -> str:
+def _stats_table(s: dict, top_name: str) -> str:
     w_key, w_val = 20, 24
     header = f"{'Metric':<{w_key}} {'Value':<{w_val}}"
     sep = f"{'-' * w_key} {'-' * w_val}"
@@ -147,10 +147,7 @@ def _stats_table(guild: discord.Guild, s: dict) -> str:
     if s["top_offerer_id"] is None:
         top_val = "Chưa có ai khao."
     else:
-        m = guild.get_member(s["top_offerer_id"])
-        name = m.display_name if m else str(s["top_offerer_id"])
-        name = _trunc(name, 16)
-        top_val = f"{name} — {s['top_count']} lần"
+        top_val = f"{_trunc(top_name, 16)} — {s['top_count']} lần"
     top_val = _trunc(top_val, w_val)
     rows = [
         header,
@@ -410,8 +407,15 @@ class OffersCog(commands.Cog):
             desc = f"Không có offer trong term `{term}`. Tất cả đang `0`."
             await interaction.response.send_message(embed=_embed_ok("Stats", desc))
             return
+        top_name = ""
+        if s["top_offerer_id"] is not None:
+            top_name = await _resolve_display_name(
+                interaction.guild,
+                interaction.client,
+                s["top_offerer_id"],
+            )
         await interaction.response.send_message(
-            embed=_embed_ok(f"Stats ({term})", _stats_table(interaction.guild, s)),
+            embed=_embed_ok(f"Stats ({term})", _stats_table(s, top_name)),
         )
 
     @app_commands.command(name="delete", description="Xoá một bản ghi offer theo ID (xem /history)")
