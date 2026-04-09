@@ -36,26 +36,48 @@ def _text_block(lines: list[str]) -> str:
     return "```text\n" + "\n".join(lines) + "\n```"
 
 
-def _display_name(guild: discord.Guild, user_id: int) -> str:
+async def _resolve_display_name(
+    guild: discord.Guild,
+    client: discord.Client,
+    user_id: int,
+) -> str:
     m = guild.get_member(user_id)
     if m:
         return _trunc(m.display_name, _NAME_MAX)
-    return _trunc(f"User {user_id}", _NAME_MAX)
+    u = client.get_user(user_id)
+    if u:
+        return _trunc(getattr(u, "display_name", u.name), _NAME_MAX)
+    try:
+        fetched = await client.fetch_user(user_id)
+        return _trunc(getattr(fetched, "display_name", fetched.name), _NAME_MAX)
+    except Exception:
+        return _trunc(f"ID {user_id}", _NAME_MAX)
 
 
-def _leaderboard_table(guild: discord.Guild, rows: list[dict]) -> str:
+async def _build_name_map(
+    guild: discord.Guild,
+    client: discord.Client,
+    user_ids: set[int],
+) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for uid in user_ids:
+        out[uid] = await _resolve_display_name(guild, client, uid)
+    return out
+
+
+def _leaderboard_table(rows: list[dict], name_map: dict[int, str]) -> str:
     header = f"{'#':<2} {'User':<{_NAME_MAX}} {'Count':>5}"
     sep = f"{'--':<2} {'-' * _NAME_MAX} {'-' * 5}"
     out = [header, sep]
     for i, r in enumerate(rows, start=1):
-        m = guild.get_member(r["offerer_id"])
-        name = m.display_name if m else f"User {r['offerer_id']}"
+        uid = int(r["offerer_id"])
+        name = name_map.get(uid, f"ID {uid}")
         name = _trunc(name, _NAME_MAX)
         out.append(f"{i:<2} {name:<{_NAME_MAX}} {int(r['count']):>5}")
     return _text_block(out)
 
 
-def _history_table(guild: discord.Guild, rows: list[dict]) -> str:
+def _history_table(rows: list[dict], name_map: dict[int, str]) -> str:
     w_id, w_company, w_term, w_count, w_note = 5, 18, 10, 7, 20
     header = (
         f"{'ID':<{w_id}} "
@@ -77,8 +99,8 @@ def _history_table(guild: discord.Guild, rows: list[dict]) -> str:
     )
     out = [header, sep]
     for o in rows:
-        o_name = _display_name(guild, o["offerer_id"])
-        e_name = _display_name(guild, o["offeree_id"])
+        o_name = _trunc(name_map.get(int(o["offerer_id"]), f"ID {int(o['offerer_id'])}"), _NAME_MAX)
+        e_name = _trunc(name_map.get(int(o["offeree_id"]), f"ID {int(o['offeree_id'])}"), _NAME_MAX)
         company = _trunc((o.get("company") or "—"), w_company)
         term = _trunc((o.get("term") or "—"), w_term)
         cnt = int(o.get("count") or 1)
@@ -141,12 +163,17 @@ def _stats_table(guild: discord.Guild, s: dict) -> str:
 
 
 class LeaderboardDetailSelect(discord.ui.Select):
-    def __init__(self, guild: discord.Guild, term: str, rows: list[dict[str, int]]) -> None:
+    def __init__(
+        self,
+        term: str,
+        rows: list[dict[str, int]],
+        name_map: dict[int, str],
+    ) -> None:
         options: list[discord.SelectOption] = []
         for r in rows:
             uid = int(r["offerer_id"])
             count = int(r["count"])
-            label = _display_name(guild, uid)
+            label = _trunc(name_map.get(uid, f"ID {uid}"), 100)
             options.append(
                 discord.SelectOption(
                     label=label,
@@ -180,7 +207,7 @@ class LeaderboardDetailSelect(discord.ui.Select):
             )
             return
         total = sum(int(x["cnt"]) for x in breakdown)
-        name = _display_name(interaction.guild, uid)
+        name = await _resolve_display_name(interaction.guild, interaction.client, uid)
         desc = _detail_table(breakdown)
         desc += f"\nTop `{name}`: **`{total}`** offer trong term `{self.term}`."
         await interaction.response.send_message(
@@ -190,10 +217,16 @@ class LeaderboardDetailSelect(discord.ui.Select):
 
 
 class LeaderboardDetailView(discord.ui.View):
-    def __init__(self, owner_id: int, guild: discord.Guild, term: str, rows: list[dict[str, int]]) -> None:
+    def __init__(
+        self,
+        owner_id: int,
+        term: str,
+        rows: list[dict[str, int]],
+        name_map: dict[int, str],
+    ) -> None:
         super().__init__(timeout=180)
         self.owner_id = owner_id
-        self.add_item(LeaderboardDetailSelect(guild, term, rows))
+        self.add_item(LeaderboardDetailSelect(term, rows, name_map))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -292,12 +325,17 @@ class OffersCog(commands.Cog):
             )
             return
         g = interaction.guild
+        name_map = await _build_name_map(
+            g,
+            interaction.client,
+            {int(r["offerer_id"]) for r in rows},
+        )
         top = rows[0]
-        top_name = _display_name(g, int(top["offerer_id"]))
+        top_name = name_map.get(int(top["offerer_id"]), f"ID {int(top['offerer_id'])}")
         top_count = int(top["count"])
-        desc = _leaderboard_table(g, rows)
+        desc = _leaderboard_table(rows, name_map)
         desc += f"\nTop term `{term}`: **{top_name}** — `{top_count}` offer. Khao di an thoi."
-        view = LeaderboardDetailView(interaction.user.id, g, term, rows)
+        view = LeaderboardDetailView(interaction.user.id, term, rows, name_map)
         await interaction.response.send_message(
             embed=_embed_ok(f"Leaderboard ({term})", desc),
             view=view,
@@ -335,11 +373,19 @@ class OffersCog(commands.Cog):
                 embed=_embed_ok("History", "Không có bản ghi."),
             )
             return
+        name_map = await _build_name_map(
+            interaction.guild,
+            interaction.client,
+            {
+                *(int(o["offerer_id"]) for o in rows),
+                *(int(o["offeree_id"]) for o in rows),
+            },
+        )
         title = f"History ({user.display_name})" if user else "History (server)"
         if t:
             title += f" - {t}"
         await interaction.response.send_message(
-            embed=_embed_ok(title, _history_table(interaction.guild, rows)),
+            embed=_embed_ok(title, _history_table(rows, name_map)),
         )
 
     @app_commands.command(name="stats", description="Thống kê nhanh server")
