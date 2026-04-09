@@ -1,4 +1,4 @@
-"""Slash commands: offer, leaderboard, history, stats."""
+"""Slash commands: offer, leaderboard, history, stats, delete."""
 from __future__ import annotations
 
 import discord
@@ -412,6 +412,70 @@ class OffersCog(commands.Cog):
             return
         await interaction.response.send_message(
             embed=_embed_ok(f"Stats ({term})", _stats_table(interaction.guild, s)),
+        )
+
+    @app_commands.command(name="delete", description="Xoá một bản ghi offer theo ID (xem /history)")
+    @app_commands.rename(record_id="id")
+    @app_commands.describe(record_id="ID bản ghi (cột đầu tiên trong bảng /history)")
+    async def delete_cmd(self, interaction: discord.Interaction, record_id: int) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                embed=_embed_err("Lệnh chỉ dùng trong server."),
+                ephemeral=True,
+            )
+            return
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message(
+                embed=_embed_err("Không xác định được thành viên server."),
+                ephemeral=True,
+            )
+            return
+        try:
+            row = db.get_offer(interaction.guild.id, record_id)
+        except Exception as e:
+            await interaction.response.send_message(
+                embed=_embed_err(f"Lỗi DB: {e}"),
+                ephemeral=True,
+            )
+            return
+        if row is None:
+            await interaction.response.send_message(
+                embed=_embed_err(f"Không tìm thấy bản ghi `#{record_id}` trong server này."),
+                ephemeral=True,
+            )
+            return
+        perms = member.guild_permissions
+        is_offerer = int(row["offerer_id"]) == member.id
+        is_mod = bool(perms.administrator or perms.manage_guild)
+        if not is_offerer and not is_mod:
+            await interaction.response.send_message(
+                embed=_embed_err("Chỉ người tạo offer hoặc mod (Manage Server / Administrator) mới xoá được."),
+                ephemeral=True,
+            )
+            return
+        try:
+            n = db.delete_offer(interaction.guild.id, record_id)
+        except Exception as e:
+            await interaction.response.send_message(
+                embed=_embed_err(f"Lỗi DB: {e}"),
+                ephemeral=True,
+            )
+            return
+        if n == 0:
+            await interaction.response.send_message(
+                embed=_embed_err("Không xoá được bản ghi (đã bị xoá trước đó?)."),
+                ephemeral=True,
+            )
+            return
+        co = row.get("company") or "—"
+        te = row.get("term") or "—"
+        cnt = int(row.get("count") or 1)
+        await interaction.response.send_message(
+            embed=_embed_ok(
+                "Deleted",
+                f"Đã xoá `#{record_id}` — `{co}` | term `{te}` | count đã xoá: **`{cnt}`**",
+            ),
         )
 
 

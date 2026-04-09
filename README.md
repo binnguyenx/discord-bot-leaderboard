@@ -61,6 +61,7 @@ CREATE INDEX idx_offers_match ON offers (guild_id, offerer_id, offeree_id, compa
 - `/leaderboard term:<text = summer by default>`
 - `/history user:<member optional> term:<text optional>`
 - `/stats term:<text = summer by default>`
+- `/delete id:<record id>` — delete one row by its `id` from `/history` (offerer or server mods only)
 
 ## Run Locally
 

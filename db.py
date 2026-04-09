@@ -117,6 +117,28 @@ def add_or_increment_offer(
         return {"id": int(row["id"]), "count": new_count, "created": False}
 
 
+def get_offer(guild_id: int, offer_id: int) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id, guild_id, offerer_id, offeree_id, company, term, note, count, created_at
+            FROM offers
+            WHERE id = ? AND guild_id = ?
+            """,
+            (offer_id, guild_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_offer(guild_id: int, offer_id: int) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM offers WHERE id = ? AND guild_id = ?",
+            (offer_id, guild_id),
+        )
+        return int(cur.rowcount or 0)
+
+
 def leaderboard(guild_id: int, term: str, limit: int = 10) -> list[dict[str, Any]]:
     with get_conn() as conn:
         rows = conn.execute(
